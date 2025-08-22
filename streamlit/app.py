@@ -1,93 +1,86 @@
-import io
 import json
-import time
 import requests
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from datetime import datetime
 
 st.set_page_config(page_title="Voice → Gantt", layout="wide")
 
-BACKEND = st.secrets.get("backend_url", "http://localhost:8080")
+# ---- Config / Settings
+DEFAULT_BACKEND = st.secrets.get("backend_url", "http://localhost:8080")
 
-st.title("🎙️ Voice → AI → Gantt")
-
+st.title("🎙️ Voice → AI → Gantt (Scooter Wheels)")
 with st.sidebar:
     st.header("Settings")
-    backend_url = st.text_input("Backend URL", value=BACKEND)
-    st.markdown("1) Start backend\n2) Click mic → speak a command\n3) Stop → Apply")
+    backend_url = st.text_input("Backend URL", value=DEFAULT_BACKEND)
+    st.markdown("Backend must expose **/plan** and **/voice-intent**")
 
-# Load plan from shared file (the backend persists it, but we mirror it)
-def load_plan():
-    with open("../shared/sample_plan.json", "r", encoding="utf-8") as f:
-        return json.load(f)
+# ---- Data helpers
+@st.cache_data(show_spinner=False)
+def fetch_plan(backend: str):
+    r = requests.get(f"{backend}/plan", timeout=30)
+    r.raise_for_status()
+    return r.json()
 
-def gantt(df):
-    # plotly timeline expects start/end as datetimes
+def gantt(plan):
+    df = pd.DataFrame(plan["tasks"])
     df2 = df.copy()
     df2["Start"] = pd.to_datetime(df2["start"])
     df2["Finish"] = pd.to_datetime(df2["end"])
-    fig = px.timeline(
-        df2, x_start="Start", x_end="Finish",
-        y="name", hover_name="name", title="Project Plan"
-    )
+    fig = px.timeline(df2, x_start="Start", x_end="Finish", y="name",
+                      hover_name="name", title="Scooter Wheels Plan")
     fig.update_yaxes(autorange="reversed")
     st.plotly_chart(fig, use_container_width=True)
 
-plan = load_plan()
-df = pd.DataFrame(plan["tasks"])
-gantt(df)
+# ---- Initial load
+try:
+    plan = fetch_plan(backend_url)
+except Exception as e:
+    st.error(f"Could not fetch plan from backend {backend_url}. {e}")
+    st.stop()
 
+gantt(plan)
+
+# ---- Voice upload / call backend
 st.subheader("Record a command")
-audio = st.audio_input("Push-to-talk (hold to record, release to stop)", key="mic1")
+audio = st.audio_input("Push-to-talk (hold to record, release to stop)")
 
-col1, col2 = st.columns([1, 1])
-with col1:
-    if st.button("Send to AI", type="primary", disabled=audio is None):
-        if audio is None:
-            st.warning("Record something first.")
-        else:
-            # Streamlit gives a BytesIO
-            audio_bytes = audio.read()
-            files = {
-                "audio": ("command.webm", audio_bytes, "audio/webm")
-            }
-            with st.status("Transcribing and parsing…", expanded=True) as status:
+cols = st.columns([1,1])
+with cols[0]:
+    do_send = st.button("Send to AI", type="primary", disabled=audio is None)
+with cols[1]:
+    do_reload = st.button("Reload plan")
+
+if do_send:
+    if audio is None:
+        st.warning("Record something first.")
+    else:
+        files = {"audio": ("command.webm", audio.read(), "audio/webm")}
+        with st.status("Transcribing and parsing…", expanded=True) as status:
+            try:
+                r = requests.post(f"{backend_url}/voice-intent", files=files, timeout=90)
+                r.raise_for_status()
+                data = r.json()
+
+                st.write("**Transcript:**", data.get("transcript"))
+                st.write("**Intent:**")
+                st.json(data.get("intent"))
+                st.write("**Diff:**")
+                st.json(data.get("diff"))
+
+                # Re-fetch authoritative plan from backend after apply
+                plan = fetch_plan(backend_url)
+                gantt(plan)
+                status.update(label="Done", state="complete")
+            except requests.RequestException as e:
                 try:
-                    r = requests.post(f"{backend_url}/voice-intent", files=files, timeout=60)
-                    r.raise_for_status()
-                    data = r.json()
+                    st.error(r.json())
+                except Exception:
+                    st.error(str(e))
+                status.update(label="Error", state="error")
 
-                    st.write("**Transcript:**", data.get("transcript"))
-                    st.write("**Intent:**")
-                    st.json(data.get("intent"))
+if do_reload:
+    plan = fetch_plan(backend_url)
+    gantt(plan)
 
-                    st.write("**Diff:**")
-                    st.json(data.get("diff"))
-
-                    # Overwrite local plan display with updated plan
-                    updated = data.get("updatedPlan")
-                    if updated:
-                        with open("../shared/sample_plan.json", "w", encoding="utf-8") as f:
-                            json.dump(updated, f, indent=2)
-                        st.success("Plan updated.")
-                        df = pd.DataFrame(updated["tasks"])
-                        gantt(df)
-                    status.update(label="Done", state="complete")
-                except requests.RequestException as e:
-                    try:
-                        err = r.json()
-                    except Exception:
-                        err = {"error": str(e)}
-                    st.error(err)
-                    status.update(label="Error", state="error")
-
-with col2:
-    if st.button("Reload plan"):
-        plan = load_plan()
-        df = pd.DataFrame(plan["tasks"])
-        gantt(df)
-
-st.caption("Tip: Try saying “move Design Review forward by two days” or “create task Beta QA from 2025-09-01 to 2025-09-03”.")
-
+st.caption("Examples: “move W1 Truing forward 1 day”, “extend W2 Spoking 2 days”, “move milestone Ship to Customer to 2025-08-28”, “shift phase Spoking backward 1 day”.")
