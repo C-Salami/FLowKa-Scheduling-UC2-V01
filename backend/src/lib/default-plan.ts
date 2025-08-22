@@ -1,0 +1,19 @@
+// "Scooter Wheels" scheduling puzzle — same structure as yesterday.
+// Tasks represent a simplified flow for producing a batch of scooter wheels.
+export const defaultPlan = {
+  tasks: [
+    { id: "w1_cut",   name: "W1 Cutting",    start: "2025-08-18", end: "2025-08-18" },
+    { id: "w1_spoke", name: "W1 Spoking",    start: "2025-08-19", end: "2025-08-20", dependsOn: ["w1_cut"] },
+    { id: "w1_true",  name: "W1 Truing",     start: "2025-08-21", end: "2025-08-21", dependsOn: ["w1_spoke"] },
+    { id: "w1_qc",    name: "W1 QC",         start: "2025-08-22", end: "2025-08-22", dependsOn: ["w1_true"] },
+
+    { id: "w2_cut",   name: "W2 Cutting",    start: "2025-08-18", end: "2025-08-18" },
+    { id: "w2_spoke", name: "W2 Spoking",    start: "2025-08-19", end: "2025-08-20", dependsOn: ["w2_cut"] },
+    { id: "w2_true",  name: "W2 Truing",     start: "2025-08-21", end: "2025-08-21", dependsOn: ["w2_spoke"] },
+    { id: "w2_qc",    name: "W2 QC",         start: "2025-08-22", end: "2025-08-22", dependsOn: ["w2_true"] },
+
+    { id: "assy_pair", name: "Wheel Pair Assembly", start: "2025-08-25", end: "2025-08-25", dependsOn: ["w1_qc","w2_qc"] },
+    { id: "pack",      name: "Packaging",           start: "2025-08-26", end: "2025-08-26", dependsOn: ["assy_pair"] },
+    { id: "ship",      name: "Ship to Customer",    start: "2025-08-27", end: "2025-08-27", dependsOn: ["pack"] }
+  ]
+};
