@@ -1,7 +1,10 @@
-import { addDays, parseISO, formatISO } from "date-fns"; // optional helper
+import { addDays, parseISO, formatISO } from "date-fns";
 import type { Plan, Task, PlanDiff, Intent } from "../types.js";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { defaultPlan } from "./default-plan.js";
+
+const planPath = () => path.resolve(process.cwd(), "../shared/sample_plan.json");
 
 function shiftDates(task: Task, delta: number): Task {
   const start = formatISO(addDays(parseISO(task.start), delta), { representation: "date" });
@@ -9,14 +12,25 @@ function shiftDates(task: Task, delta: number): Task {
   return { ...task, start, end };
 }
 
+export async function ensurePlanOnDisk(): Promise<Plan> {
+  const p = planPath();
+  try {
+    const raw = await fs.readFile(p, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    // If the shared file isn't there, seed with the Scooter Wheels dataset.
+    await fs.mkdir(path.dirname(p), { recursive: true });
+    await fs.writeFile(p, JSON.stringify(defaultPlan, null, 2), "utf8");
+    return defaultPlan as Plan;
+  }
+}
+
 export async function loadPlan(): Promise<Plan> {
-  const p = path.resolve(process.cwd(), "../shared/sample_plan.json");
-  const raw = await fs.readFile(p, "utf8");
-  return JSON.parse(raw);
+  return ensurePlanOnDisk();
 }
 
 export async function savePlan(plan: Plan): Promise<void> {
-  const p = path.resolve(process.cwd(), "../shared/sample_plan.json");
+  const p = planPath();
   await fs.writeFile(p, JSON.stringify(plan, null, 2), "utf8");
 }
 
@@ -70,7 +84,6 @@ export function applyIntent(plan: Plan, intent: Intent): PlanDiff {
       break;
     }
     case "shift_phase": {
-      // naive: shift any task whose name includes the phase term
       const lowered = intent.target.toLowerCase();
       const phaseTasks = tasks.filter(t => t.name.toLowerCase().includes(lowered));
       if (!phaseTasks.length) throw new Error(`No tasks matched phase: ${intent.target}`);
@@ -82,16 +95,11 @@ export function applyIntent(plan: Plan, intent: Intent): PlanDiff {
     }
   }
 
-  // Apply the changes immutably
   const nextTasks = tasks.map(t => {
     const upd = changes.find(c => c.type === "update" && c.taskId === t.id) as any;
     return upd ? upd.after : t;
   });
-  for (const c of changes) {
-    if (c.type === "create") nextTasks.push(c.task);
-  }
+  for (const c of changes) if (c.type === "create") nextTasks.push(c.task);
 
-  plan.tasks = nextTasks;
   return { changes };
 }
-
